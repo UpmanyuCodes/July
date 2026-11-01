@@ -24,8 +24,16 @@ while True:
 
     messages.append({"role": "user", "content": user_text})
 
-    response = client.chat.completions.create(model=MODEL, messages=messages)
+    try:
+        response = client.chat.completions.create(model=MODEL, messages=messages)
+    except Exception as e:
+        print("July: Sorry, something went wrong:", e)
+        messages.pop()
+        continue
+
     reply = response.choices[0].message.content
 
     messages.append({"role": "assistant", "content": reply})
     print("July:", reply)
+
+
