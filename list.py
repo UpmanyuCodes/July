@@ -1,13 +1,14 @@
-import os
+import os, requests
 from dotenv import load_dotenv
-from openai import OpenAI
 
 load_dotenv()
+h = {"Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"}
 
-client = OpenAI(
-    api_key=os.environ["GEMINI_API_KEY"],
-    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-)
+u = requests.get("https://api.github.com/user", headers=h)
+print("Token valid:", u.status_code)
 
-for m in client.models.list():
-    print(m.id)
+r = requests.get("https://api.github.com/user/repos?per_page=100&affiliation=owner", headers=h)
+print("Repos status:", r.status_code)
+if r.status_code == 200:
+    for x in r.json():
+        print(x["full_name"], "| private" if x["private"] else "| public")
