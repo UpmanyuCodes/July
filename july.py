@@ -439,6 +439,37 @@ def send_email(to, subject, body):
     return f"Email sent to {to}."
 
 
+# ---------- MEMORY TOOL ----------
+MEMORY_FILE = "memory.json"
+MAX_MEMORIES = 50   # safety: memory can't grow forever
+
+
+def load_memory():
+    """Read the list of saved facts. Returns [] if there is no file yet."""
+    if not os.path.exists(MEMORY_FILE):
+        return []
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_memory(fact):
+    fact = fact.strip()
+    if not fact:
+        return "Nothing to save."
+    facts = load_memory()
+    if fact.lower() in [f.lower() for f in facts]:
+        return "I already know this."
+    if len(facts) >= MAX_MEMORIES:
+        return "Memory is full. Ask the user what to forget."
+    facts.append(fact)
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(facts, f, indent=2, ensure_ascii=False)
+    return f"Saved: {fact}"
+
+
 # ---------- THE MENU (what the LLM reads) ----------
 def tool(name, description, props, required):
     return {
@@ -504,6 +535,10 @@ TOOLS = [
          "Send a plain text email to any valid email address. The human approves first. "
          "Write the full subject and body yourself, using real data from other tools.",
          {"to": S, "subject": S, "body": S}, ["to", "subject", "body"]),
+    tool("save_memory",
+         "Save ONE short fact about the user to long-term memory, for example a preference or a project name. "
+         "Only use it when the user asks you to remember something.",
+         {"fact": S}, ["fact"]),
 ]
 
 FUNCTIONS = {
@@ -521,9 +556,10 @@ FUNCTIONS = {
     "plot_chart": plot_chart,
     "update_csv_cell": update_csv_cell,
     "send_email": send_email,
+    "save_memory": save_memory,
 }
 
-SYSTEM = f"""You are July, a friendly AI agent that explores and edits GitHub, analyses and edits local CSV files, and sends emails, using tools.
+SYSTEM = f"""You are July, a friendly AI agent that explores and edits GitHub, analyses and edits local CSV files, sends emails, and remembers facts about the user, using tools.
 The owner's GitHub username is {GITHUB_USERNAME}.
 Rules:
 - Never guess. Get real data with tools before answering.
@@ -544,7 +580,18 @@ Rules:
 - Never call the same tool again with the same inputs. If a tool result is not what you hoped, explain it to the user.
 - If a tool returns an error, tell the user honestly. Never pretend a change or an email worked.
 - If you have no tool for something, say so.
-- Keep answers short and simple."""
+- Keep answers short and simple.
+- To remember something, you MUST call the save_memory tool. Never say you remembered something unless the tool returned "Saved".
+- Save a memory only when the user clearly asks you to remember something. Write it as one short fact.
+- Never save passwords, API keys or other secrets in memory.
+- For questions about the user, first check the remembered facts below (if any). Only use GitHub tools if the answer is not there."""
+
+# Load saved facts and add them to July's instructions
+saved_facts = load_memory()
+if saved_facts:
+    SYSTEM += "\n\nThings you remember about the user:\n" + "\n".join(
+        f"- {fact}" for fact in saved_facts
+    )
 
 messages = [{"role": "system", "content": SYSTEM}]
 
@@ -604,6 +651,7 @@ if EMAIL_ADDRESS and EMAIL_APP_PASSWORD:
     print("Email can be sent to any valid address (you approve each one).")
 else:
     print("Email is off (set EMAIL_ADDRESS and EMAIL_APP_PASSWORD in .env).")
+print(f"July remembers {len(saved_facts)} facts about you.")
 
 while True:
     user_text = input("\nYou: ")
