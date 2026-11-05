@@ -1,2 +1,7 @@
 openai
+requests
+pandas
+matplotlib
 python-dotenv
+ddgs
+streamlit
