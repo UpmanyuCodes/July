@@ -4,4 +4,4 @@ pandas
 matplotlib
 python-dotenv
 ddgs
-streamlit
+streamlit>=1.40
