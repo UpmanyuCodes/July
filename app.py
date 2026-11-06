@@ -1,8 +1,9 @@
 """July in your browser. Run:  python -m streamlit run app.py"""
 import ast
 import html
-import importlib.util
 import os
+import shutil
+import uuid
 from datetime import datetime
 
 import streamlit as st
@@ -15,96 +16,152 @@ st.set_page_config(
     page_title="July",
     page_icon="☀️",
     layout="centered",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ---------- LOOK ----------
-# Palette: paper #F3F5F8, ink #16202E, cobalt #2B3FD6 (actions), amber (approvals only)
+# Pale cool paper, ink-navy text, one cobalt-to-violet-to-cyan "light" that July itself glows with.
 # Type: Bricolage Grotesque (headings), Instrument Sans (text), JetBrains Mono (code)
 STYLE = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --paper: #F3F5F8;
+  --paper: #F4F6FA;
   --surface: #FFFFFF;
-  --ink: #16202E;
-  --muted: #5B6778;
-  --line: #D8DEE8;
+  --ink: #131C2B;
+  --muted: #5E6A7D;
+  --line: #DCE2EC;
   --accent: #2B3FD6;
   --accent-dark: #1F2FA8;
-  --amber-soft: #FFF4D9;
-  --amber-line: #E7C77A;
-  --ok: #1E9E6A;
+  --violet: #7A5CFF;
+  --cyan: #22D3EE;
+  --amber-soft: #FFF7E2;
+  --amber-line: #EBCB85;
 }
 
-html, body, .stApp { background: var(--paper); color: var(--ink); }
+/* ----- page: dot grid and a soft aurora behind everything ----- */
+html, body { background: var(--paper); }
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stHeader"] { background: transparent !important; color: var(--ink); }
+body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: radial-gradient(rgba(19, 28, 43, .10) 1px, transparent 1px);
+  background-size: 24px 24px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 60% at 50% 18%, #000 0%, transparent 75%);
+  mask-image: radial-gradient(ellipse 75% 60% at 50% 18%, #000 0%, transparent 75%);
+}
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(520px 300px at 50% 6%, rgba(122, 92, 255, .20), transparent 70%),
+    radial-gradient(420px 260px at 28% 14%, rgba(34, 211, 238, .16), transparent 70%),
+    radial-gradient(420px 260px at 74% 12%, rgba(43, 63, 214, .14), transparent 70%);
+}
+
 .stApp, p, li, label, textarea, input, button, [data-testid="stMarkdownContainer"] {
   font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li { color: var(--ink); line-height: 1.65; }
-[data-testid="stHeader"] { background: transparent; }
-[data-testid="stAppDeployButton"], #MainMenu, footer { display: none; }
-.block-container, [data-testid="stMainBlockContainer"] { max-width: 800px; padding-top: 2.2rem; padding-bottom: 6rem; }
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stAppDeployButton"], [data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
+.block-container, [data-testid="stMainBlockContainer"] { max-width: 760px; padding-top: 1.4rem; padding-bottom: 7rem; }
 
-/* ----- sidebar ----- */
-[data-testid="stSidebar"] { background: #E9EDF3; border-right: 1px solid var(--line); }
+/* ----- top bar ----- */
 .brand {
   font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700;
-  font-size: 1.8rem; letter-spacing: -.035em; color: var(--ink);
-  display: flex; align-items: flex-start; gap: .3rem; margin: .3rem 0 1.1rem;
+  font-size: 1.45rem; letter-spacing: -.035em; color: var(--ink);
+  display: flex; align-items: flex-start; gap: .28rem; padding-top: .25rem;
 }
-.sun { width: .55rem; height: .55rem; border-radius: 50%; background: #F2A900; margin-top: .55rem; }
-.side-label { font-size: .84rem; font-weight: 600; color: var(--muted); margin: 1.5rem 0 .5rem; }
-.conn { display: flex; gap: .6rem; align-items: flex-start; padding: .5rem 0; border-bottom: 1px solid var(--line); }
-.conn:last-child { border-bottom: 0; }
-.dot { width: .5rem; height: .5rem; border-radius: 50%; background: #A3ADBB; margin-top: .42rem; flex: none; }
-.dot.on { background: var(--ok); }
-.conn-name { font-weight: 600; font-size: .9rem; color: var(--ink); }
-.conn-note { color: var(--muted); font-size: .78rem; line-height: 1.4; }
-.facts { max-height: 34vh; overflow-y: auto; }
-.fact { font-size: .85rem; line-height: 1.4; padding: .35rem 0 .35rem .7rem; border-left: 2px solid var(--line); margin-bottom: .4rem; color: #2A3547; }
-.side-foot { color: var(--muted); font-size: .77rem; line-height: 1.5; margin-top: 1.6rem; }
+.sun { width: .45rem; height: .45rem; border-radius: 50%; background: #F2A900; margin-top: .42rem; }
+.st-key-new_chat .stButton { display: flex; justify-content: flex-end; }
+.st-key-new_chat button { width: auto; background: rgba(255, 255, 255, .7); backdrop-filter: blur(6px); }
+
+/* ----- July's orb: the one memorable thing ----- */
+.orb { position: relative; width: 108px; height: 108px; margin: 0 auto 1.6rem; border-radius: 50%; animation: breathe 7s ease-in-out infinite; }
+.orb i, .mini-orb i { position: absolute; inset: 0; border-radius: 50%; display: block; }
+.orb-core {
+  background: conic-gradient(from 0deg, #2B3FD6, #7A5CFF, #22D3EE, #7A5CFF, #2B3FD6);
+  box-shadow: 0 0 80px rgba(86, 100, 255, .50), 0 0 24px rgba(34, 211, 238, .35);
+  filter: blur(1.2px); animation: spin 16s linear infinite;
+}
+.orb-gloss {
+  background:
+    radial-gradient(circle at 31% 25%, rgba(255, 255, 255, .95), rgba(255, 255, 255, 0) 42%),
+    radial-gradient(circle at 72% 82%, rgba(19, 28, 43, .38), rgba(19, 28, 43, 0) 58%);
+}
+.orb-ring {
+  inset: -10px !important; border: 1px solid rgba(43, 63, 214, .40);
+  border-top-color: transparent; border-left-color: transparent; animation: spin 10s linear infinite reverse;
+}
+.mini-orb { position: relative; display: inline-block; width: 22px; height: 22px; border-radius: 50%; flex: none; }
+.mini-orb .orb-core { box-shadow: 0 0 16px rgba(86, 100, 255, .55); filter: none; animation-duration: 3s; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes breathe { 50% { transform: scale(1.045); } }
+@keyframes shimmer { to { background-position: -200% 0; } }
 
 /* ----- start screen ----- */
-.stApp .hero { padding: 2.4rem 0 1.6rem; }
+.stApp .hero { text-align: center; padding: 3.2rem 0 1.4rem; }
 .stApp .hero h1 {
   font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700;
-  font-size: clamp(2rem, 5.2vw, 3.2rem) !important; letter-spacing: -.035em;
-  line-height: 1.04; margin: 0 0 .9rem !important; padding: 0 !important; color: var(--ink);
+  font-size: clamp(2.2rem, 6vw, 3.4rem) !important; letter-spacing: -.04em; line-height: 1.05;
+  margin: 0 0 .5rem !important; padding: 0 !important; color: var(--ink);
 }
-.stApp .hero p { color: var(--muted); font-size: 1.03rem; line-height: 1.55; max-width: 48ch; margin: 0; }
-[class*="st-key-prompt_"] button {
-  justify-content: flex-start; text-align: left; background: var(--surface);
-  border: 1px solid var(--line); border-radius: 12px; padding: .9rem 1rem;
-  min-height: 3.4rem; font-weight: 500;
+.stApp .hero p { color: var(--muted); font-size: 1.15rem; margin: 0; }
+.st-key-starters { flex-direction: row !important; flex-wrap: wrap; justify-content: center; gap: .6rem !important; margin-top: 1.2rem; }
+.st-key-starters .stElementContainer, .st-key-starters .stButton { width: auto !important; }
+.st-key-starters button {
+  width: auto; border-radius: 999px; padding: .55rem 1.1rem; min-height: 0; font-weight: 500;
+  background: rgba(255, 255, 255, .78); backdrop-filter: blur(6px);
 }
-[class*="st-key-prompt_"] button p { text-align: left; }
+.st-key-starters button:hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(43, 63, 214, .16); }
 
 /* ----- buttons ----- */
-.stButton > button { width: 100%; border-radius: 10px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); transition: border-color .15s, background .15s, color .15s; }
+.stButton > button {
+  border-radius: 10px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  transition: border-color .15s, background .15s, color .15s, box-shadow .2s, transform .2s;
+}
 .stButton > button:hover { border-color: var(--accent); color: var(--accent); }
 .stButton > button[kind="primary"], .stButton > button[data-testid="stBaseButton-primary"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 .stButton > button[kind="primary"]:hover, .stButton > button[data-testid="stBaseButton-primary"]:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #fff; }
+.stButton button p { color: inherit !important; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ----- messages ----- */
-[data-testid="stChatMessage"] { background: transparent; padding: .4rem 0; }
-[data-testid^="stChatMessageAvatar"] { display: none; }
-.user-wrap { display: flex; justify-content: flex-end; }
+[data-testid="stChatMessage"] { background: transparent; padding: .45rem 0; gap: .8rem; }
+[data-testid="stChatMessageAvatarUser"] { display: none; }
+[data-testid="stChatMessageAvatarAssistant"] {
+  width: 26px !important; height: 26px !important; min-width: 26px; border-radius: 50% !important; margin-top: .15rem;
+  background: conic-gradient(from 30deg, #2B3FD6, #7A5CFF, #22D3EE, #2B3FD6) !important;
+  box-shadow: 0 0 16px rgba(86, 100, 255, .5); color: transparent !important; overflow: hidden;
+}
+[data-testid="stChatMessageAvatarAssistant"] * { display: none !important; }
+.user-wrap { display: flex; justify-content: flex-end; padding: 2px 6px 8px 2px; }
 .user-msg {
-  background: var(--surface); border: 1px solid var(--line); border-radius: 14px 14px 4px 14px;
-  padding: .65rem .95rem; max-width: 85%; white-space: pre-wrap; line-height: 1.55; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px 16px 4px 16px;
+  padding: .65rem 1rem; max-width: 85%; white-space: pre-wrap; line-height: 1.55; color: var(--ink);
+  box-shadow: 0 4px 18px rgba(19, 28, 43, .05);
+}
+
+/* ----- thinking indicator ----- */
+.thinking { display: flex; align-items: center; gap: .7rem; padding: .4rem 0 .4rem .1rem; }
+.shimmer {
+  font-weight: 600; font-size: .95rem; color: var(--muted);
+  background: linear-gradient(90deg, #5E6A7D 0%, #5E6A7D 35%, #2B3FD6 48%, #7A5CFF 52%, #5E6A7D 65%, #5E6A7D 100%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; animation: shimmer 2.4s linear infinite;
 }
 
 /* ----- the trail: the steps July took ----- */
-details.trail { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .15rem .95rem; margin: 0 0 .9rem; }
+details.trail {
+  background: rgba(255, 255, 255, .82); backdrop-filter: blur(6px); border: 1px solid var(--line);
+  border-radius: 14px; padding: .15rem .95rem; margin: 0 0 .9rem;
+}
 details.trail summary { cursor: pointer; font-weight: 600; font-size: .88rem; color: var(--ink); padding: .5rem 0; list-style: none; }
 details.trail summary::-webkit-details-marker { display: none; }
 details.trail summary::before { content: "+"; display: inline-block; width: 1.1rem; color: var(--accent); font-weight: 700; }
 details.trail[open] summary::before { content: "\\2212"; }
 details.trail ol { list-style: none; counter-reset: step; margin: .1rem 0 .6rem; padding: 0; position: relative; }
-details.trail ol::before { content: ""; position: absolute; left: .8rem; top: .9rem; bottom: .9rem; width: 1px; background: var(--line); }
+details.trail ol::before { content: ""; position: absolute; left: .8rem; top: .9rem; bottom: .9rem; width: 1px; background: linear-gradient(var(--accent), var(--cyan)); opacity: .45; }
 details.trail li { counter-increment: step; position: relative; display: grid; grid-template-columns: 1.7rem 1fr; column-gap: .55rem; padding: .35rem 0; }
 details.trail li::before {
   content: counter(step); grid-row: 1 / span 2; width: 1.6rem; height: 1.6rem; border-radius: 50%;
@@ -117,20 +174,36 @@ details.trail li::before {
 .t-detail { grid-column: 2; line-height: 1.4; word-break: break-word; }
 
 /* ----- approval card ----- */
-.st-key-approval { background: var(--amber-soft); border: 1px solid var(--amber-line); border-radius: 14px; padding: 1rem 1.1rem 1.1rem; margin: .6rem 0 1rem; }
+.st-key-approval {
+  background: rgba(255, 247, 226, .92); border: 1px solid var(--amber-line); border-left: 4px solid #E0A526;
+  border-radius: 14px; padding: 1rem 1.1rem 1.1rem; margin: .6rem 0 1rem; box-shadow: 0 10px 34px rgba(224, 165, 38, .14);
+}
 .ap-title { font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 1.2rem; color: #5E3F08; }
 .ap-copy { color: #6B5520; font-size: .9rem; margin: .2rem 0 .3rem; }
 .st-key-approval pre { white-space: pre-wrap !important; word-break: break-word; background: var(--surface) !important; border: 1px solid var(--amber-line); border-radius: 10px; }
+[data-testid="stImage"] img { border-radius: 14px; border: 1px solid var(--line); }
 code, pre { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace !important; }
 
-/* ----- input ----- */
-[data-testid="stBottom"] > div { background: var(--paper); }
-[data-testid="stChatInput"] { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
-[data-testid="stChatInput"]:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(43, 63, 214, .14); }
+/* ----- input: glows when you type ----- */
+[data-testid="stBottom"], [data-testid="stBottom"] > div { background: transparent !important; }
+[data-testid="stChatInput"] {
+  background: rgba(255, 255, 255, .92); border: 1px solid var(--line); border-radius: 18px;
+  box-shadow: 0 10px 40px rgba(19, 28, 43, .07); transition: box-shadow .25s, border-color .25s;
+}
+[data-testid="stChatInput"]:focus-within {
+  border-color: transparent;
+  background: linear-gradient(#fff, #fff) padding-box, linear-gradient(110deg, #2B3FD6, #7A5CFF, #22D3EE) border-box;
+  box-shadow: 0 10px 44px rgba(86, 100, 255, .26);
+}
+[data-testid="stChatInput"] > div { background: transparent !important; border: none !important; border-radius: 18px; }
 [data-testid="stChatInput"] textarea { color: var(--ink); }
+[data-testid="stChatInputSubmitButton"]:not(:disabled) { background: linear-gradient(135deg, #2B3FD6, #7A5CFF) !important; color: #fff !important; border-radius: 12px; }
 
-@media (max-width: 640px) { .user-msg { max-width: 95%; } }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+@media (max-width: 640px) { .user-msg { max-width: 95%; } .stApp .hero { padding-top: 2rem; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .shimmer { -webkit-text-fill-color: var(--muted); }
+}
 </style>
 """
 st.markdown(STYLE, unsafe_allow_html=True)
@@ -147,6 +220,8 @@ TOOL_LABELS = {
     "search_code": "Search code on GitHub",
     "write_file": "Edit a GitHub file",
     "list_data_files": "Look in the data folder",
+    "file_summary": "Summarize an uploaded file",
+    "read_local_file": "Read an uploaded file",
     "csv_summary": "Summarize a CSV file",
     "group_stats": "Group CSV data",
     "plot_chart": "Draw a chart",
@@ -185,14 +260,21 @@ APPROVALS = {
     ),
 }
 
-PROMPTS = [
-    "List my GitHub repositories",
-    "Summarize samples.csv",
-    "Check my notices from the last 7 days",
-    "Show my last 5 emails",
-    "Search the web for robotics news",
-    "What do you remember about me?",
+PROMPTS = [  # (what the pill says, what July is asked)
+    ("List my GitHub repositories", "List my GitHub repositories"),
+    ("Summarize my uploaded file", "Summarize the file I uploaded"),
+    ("Check my notices", "Check my notices from the last 7 days"),
+    ("Show my last 5 emails", "Show my last 5 emails"),
+    ("Search robotics news", "Search the web for the latest robotics news"),
+    ("Chart my uploaded CSV", "Make a useful chart from the uploaded CSV file"),
 ]
+
+ORB = '<i class="orb-ring"></i><i class="orb-core"></i><i class="orb-gloss"></i>'
+MINI_ORB = '<i class="orb-core"></i><i class="orb-gloss"></i>'
+THINKING = (
+    f'<div class="thinking"><span class="mini-orb">{MINI_ORB}</span>'
+    '<span class="shimmer">July is thinking</span></div>'
+)
 
 
 # ---------- HELPERS ----------
@@ -257,15 +339,62 @@ def render_message(item):
 
 
 # ---------- STATE (kept while the browser tab is open) ----------
+def clear_old_upload_workspaces():
+    sessions_dir = os.path.join(core.DATA_ROOT, ".sessions")
+    if not os.path.isdir(sessions_dir):
+        return
+    for name in os.listdir(sessions_dir):
+        workspace = os.path.join(sessions_dir, name)
+        if os.path.isdir(workspace):
+            shutil.rmtree(workspace)
+
+
 def new_chat():
+    old_upload_dir = st.session_state.get("upload_dir")
+    if old_upload_dir:
+        core.clear_data_files(old_upload_dir)
+    upload_dir = os.path.join(core.DATA_ROOT, ".sessions", uuid.uuid4().hex)
+    core.configure_data_dir(upload_dir)
+    st.session_state.upload_dir = upload_dir
+    st.session_state.pop("uploaded_files", None)
+    st.session_state.pop("queued", None)
     st.session_state.agent = core.JulyAgent()
     st.session_state.chat = []  # each item: role, content, tools, images
 
 
 if "agent" not in st.session_state:
+    # Remove legacy files from the old shared workspace before starting an isolated chat.
+    core.clear_data_files(core.DATA_ROOT)
+    clear_old_upload_workspaces()
     new_chat()
 
 agent = st.session_state.agent
+
+
+st.markdown("#### Add files for July to analyse")
+uploaded_files = st.file_uploader(
+    "Upload one or more files",
+    accept_multiple_files=False,
+    key="uploaded_files",
+    label_visibility="collapsed",
+)
+if uploaded_files:
+    try:
+        core.clear_data_files()
+        saved_name = core.save_uploaded_file(
+            uploaded_files.name, uploaded_files.getvalue()
+        )
+    except (OSError, ValueError) as error:
+        st.error(f"Could not save {uploaded_files.name}: {error}")
+        saved_name = None
+    if saved_name:
+        st.caption("Available to July: " + saved_name)
+        if st.button("Summarize uploaded files", key="summarize_uploads"):
+            st.session_state.queued = (
+                "Summarize every uploaded file currently available. "
+                "Use the appropriate tool for each file and clearly label each result."
+            )
+            st.rerun()
 
 
 def finish_turn(result):
@@ -284,89 +413,41 @@ def safe_ask(text):
         return {"status": "done", "text": f"July could not finish that request. Details: {e}"}
 
 
-# ---------- SIDEBAR ----------
-with st.sidebar:
-    st.markdown('<div class="brand">July<span class="sun"></span></div>', unsafe_allow_html=True)
+def while_thinking(function, *args):
+    """Show the animated 'thinking' indicator while July works."""
+    slot = st.empty()
+    slot.markdown(THINKING, unsafe_allow_html=True)
+    try:
+        return function(*args)
+    finally:
+        slot.empty()
 
-    if st.button("New conversation", key="new_chat"):
-        new_chat()
-        st.rerun()
 
-    github_on = bool(core.GITHUB_TOKEN)
-    if core.WRITE_REPOS:
-        write_note = "Can edit: " + ", ".join(sorted(core.WRITE_REPOS))
-    else:
-        write_note = "Read-only."
-    email_on = bool(core.EMAIL_ADDRESS and core.EMAIL_APP_PASSWORD)
-    search_on = importlib.util.find_spec("ddgs") is not None
-
-    rows = [
-        (
-            "GitHub",
-            github_on,
-            ("Connected. " if github_on else "Public repositories only. ") + write_note,
-        ),
-        (
-            "Email",
-            email_on,
-            "Send and read through Gmail."
-            if email_on
-            else "Not set up. Add EMAIL_ADDRESS and EMAIL_APP_PASSWORD to .env.",
-        ),
-        (
-            "Web search",
-            search_on,
-            "Ready." if search_on else "Run: python -m pip install ddgs",
-        ),
-    ]
-    st.markdown('<div class="side-label">Connections</div>', unsafe_allow_html=True)
-    st.markdown(
-        "".join(
-            f'<div class="conn"><span class="dot{" on" if on else ""}"></span>'
-            f'<div><div class="conn-name">{esc(name)}</div>'
-            f'<div class="conn-note">{esc(note)}</div></div></div>'
-            for name, on, note in rows
-        ),
-        unsafe_allow_html=True,
-    )
-
-    facts = core.load_memory()
-    st.markdown(f'<div class="side-label">Memory ({len(facts)})</div>', unsafe_allow_html=True)
-    if facts:
-        st.markdown(
-            '<div class="facts">'
-            + "".join(f'<div class="fact">{esc(f)}</div>' for f in facts)
-            + "</div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            '<div class="conn-note">Nothing saved yet. Ask July to remember something.</div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown(
-        '<div class="side-foot">July asks before it sends email, edits files or data, '
-        "or forgets a fact. Run this app only on your own computer.</div>",
-        unsafe_allow_html=True,
-    )
+# ---------- TOP BAR ----------
+has_chat = bool(st.session_state.chat) or bool(agent.pending)
+brand_col, action_col = st.columns([4, 1])
+brand_col.markdown('<div class="brand">July<span class="sun"></span></div>', unsafe_allow_html=True)
+if has_chat and action_col.button("New chat", key="new_chat"):
+    new_chat()
+    st.rerun()
 
 
 # ---------- MAIN ----------
 queued = st.session_state.pop("queued", None)  # a starter prompt that was clicked
 
-if not st.session_state.chat and not agent.pending and not queued:
-    st.markdown(
-        f'<div class="hero"><h1>{greeting()}.<br>What should July do?</h1>'
-        "<p>July can read your GitHub and inbox, analyze CSV files, search the web "
-        "and remember things. It asks before it changes anything.</p></div>",
-        unsafe_allow_html=True,
-    )
-    columns = st.columns(2)
-    for i, text in enumerate(PROMPTS):
-        if columns[i % 2].button(text, key=f"prompt_{i}"):
-            st.session_state.queued = text
-            st.rerun()
+hero_slot = st.empty()  # the start screen lives here, so it can be cleared when a message is sent
+if not has_chat and not queued:
+    with hero_slot.container():
+        st.markdown(
+            f'<div class="hero"><div class="orb">{ORB}</div>'
+            f"<h1>{greeting()}.</h1><p>What should we work on?</p></div>",
+            unsafe_allow_html=True,
+        )
+        with st.container(key="starters"):
+            for i, (label, ask_text) in enumerate(PROMPTS):
+                if st.button(label, key=f"prompt_{i}"):
+                    st.session_state.queued = ask_text
+                    st.rerun()
 
 for item in st.session_state.chat:
     render_message(item)
@@ -383,14 +464,12 @@ if agent.pending:
             unsafe_allow_html=True,
         )
         st.code("\n".join(p["lines"]), language=None)
-        left, right, _ = st.columns([1.3, 1, 2])
+        left, right, _ = st.columns([1, 1, 2.4])
         if left.button(go_label, key="approve_btn", type="primary"):
-            with st.spinner("July is working..."):
-                finish_turn(agent.decide(True))
+            finish_turn(while_thinking(agent.decide, True))
             st.rerun()
         if right.button("Cancel", key="reject_btn"):
-            with st.spinner("July is working..."):
-                finish_turn(agent.decide(False))
+            finish_turn(while_thinking(agent.decide, False))
             st.rerun()
 
 # ----- input -----
@@ -400,10 +479,9 @@ typed = st.chat_input(
 )
 text = queued or typed
 if text and not agent.pending:
+    hero_slot.empty()
     user_item = {"role": "user", "content": text}
     st.session_state.chat.append(user_item)
     render_message(user_item)
-    with st.spinner("July is working..."):
-        finish_turn(safe_ask(text))
+    finish_turn(while_thinking(safe_ask, text))
     st.rerun()
-

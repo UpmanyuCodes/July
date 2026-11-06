@@ -12,6 +12,7 @@ import email
 from datetime import datetime, timedelta
 from email.header import decode_header, make_header
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 
 import requests
 import pandas as pd
@@ -51,23 +52,11 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MAX_EMAILS = 5      # safety: at most 5 emails per run
 emails_sent = 0
 
-DATA_DIR = os.path.abspath("data")        # July reads and edits CSV files only here
+DATA_ROOT = os.path.abspath("data")
+DATA_DIR = DATA_ROOT                       # active local upload workspace
 PLOT_DIR = os.path.abspath("plots")       # July saves charts here
 BACKUP_DIR = os.path.abspath("backups")   # copy of a CSV before every edit
-os.makedirs(DATA_DIR, exist_ok=True)
-
-# If the data folder is empty, create a small practice file
-if not os.listdir(DATA_DIR):
-    with open(os.path.join(DATA_DIR, "sample.csv"), "w", encoding="utf-8") as f:
-        f.write(
-            "name,marks,city\n"
-            "Asha,82,Noida\n"
-            "Ravi,67,Delhi\n"
-            "Meera,91,Noida\n"
-            "Karan,55,Delhi\n"
-            "Isha,74,Jaipur\n"
-        )
-    print("Created data/sample.csv for practice.")
+os.makedirs(DATA_ROOT, exist_ok=True)
 
 
 # ---------- HELPERS ----------
@@ -315,6 +304,40 @@ def write_file(repo, path, content, commit_message):
 
 
 # ---------- CSV TOOLS (only the 'data' folder) ----------
+def configure_data_dir(path):
+    """Set the isolated local workspace used by the current chat."""
+    global DATA_DIR
+    resolved = os.path.abspath(path)
+    if not resolved.startswith(DATA_ROOT + os.sep):
+        raise ValueError("The upload workspace must be inside the data folder.")
+    os.makedirs(resolved, exist_ok=True)
+    DATA_DIR = resolved
+
+
+def clear_data_files(path=None):
+    """Delete files directly inside an upload workspace, not nested folders."""
+    target = os.path.abspath(path or DATA_DIR)
+    if not target.startswith(DATA_ROOT + os.sep) and target != DATA_ROOT:
+        raise ValueError("Only upload workspaces inside the data folder can be cleared.")
+    if not os.path.isdir(target):
+        return
+    for name in os.listdir(target):
+        file_path = os.path.join(target, name)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
+
+def clear_upload_workspaces():
+    """Remove old Streamlit chat workspaces created under data/.sessions."""
+    sessions_dir = os.path.join(DATA_ROOT, ".sessions")
+    if not os.path.isdir(sessions_dir):
+        return
+    for name in os.listdir(sessions_dir):
+        workspace = os.path.join(sessions_dir, name)
+        if os.path.isdir(workspace):
+            shutil.rmtree(workspace)
+
+
 def csv_path(name):
     path = os.path.abspath(os.path.join(DATA_DIR, name))
     if not path.startswith(DATA_DIR + os.sep):
@@ -326,17 +349,147 @@ def csv_path(name):
     return path
 
 
+def local_file_path(name):
+    """Resolve one file stored in the local data folder."""
+    path = os.path.abspath(os.path.join(DATA_DIR, name))
+    if not path.startswith(DATA_DIR + os.sep):
+        raise ValueError("Only files inside the data folder are allowed.")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"{name} not found. Use list_data_files to see the uploaded files."
+        )
+    return path
+
+
+def save_uploaded_file(name, content):
+    """Save a Streamlit upload in the local data folder for July to inspect."""
+    safe_name = os.path.basename(str(name)).strip()
+    if not safe_name or safe_name in (".", ".."):
+        raise ValueError("The uploaded file needs a valid file name.")
+    path = os.path.abspath(os.path.join(DATA_DIR, safe_name))
+    if not path.startswith(DATA_DIR + os.sep):
+        raise ValueError("Only files inside the data folder are allowed.")
+    with open(path, "wb") as target:
+        target.write(content)
+    return safe_name
+
+
 def list_data_files():
-    files = os.listdir(DATA_DIR)
+    files = sorted(
+        name for name in os.listdir(DATA_DIR)
+        if os.path.isfile(os.path.join(DATA_DIR, name))
+    )
     if not files:
         return (
             f"The data folder is EMPTY ({DATA_DIR}). "
-            "Tell the user to put CSV files in it. Do not look in other folders."
+            "Tell the user to upload a file. Do not look in other folders."
         )
     return (
         "Files in the data folder:\n" + "\n".join(files)
-        + "\nThese are all the files. There are no other folders."
+        + "\nThese are all the local files available to analyse."
     )
+
+
+def _text_file_summary(path):
+    with open(path, "rb") as source:
+        raw = source.read()
+    if b"\x00" in raw[:4096]:
+        return (
+            f"'{os.path.basename(path)}' is a binary file type that July cannot read yet. "
+            "Upload a text, CSV, JSON, spreadsheet, or PDF file."
+        )
+    text = raw.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    return short(
+        f"File: {os.path.basename(path)}\n"
+        f"Characters: {len(text)} | Lines: {len(lines)}\n\n"
+        f"Content:\n{text}"
+    )
+
+
+def read_local_file(file):
+    """Read an uploaded text, JSON, CSV, spreadsheet or PDF file."""
+    path = local_file_path(file)
+    extension = os.path.splitext(path)[1].lower()
+    if extension in {".csv", ".tsv"}:
+        separator = "\t" if extension == ".tsv" else ","
+        df = pd.read_csv(path, sep=separator)
+        return short(
+            f"File: {file}\nRows, columns: {df.shape}\n"
+            f"Columns: {list(df.columns)}\n\n{df.head(20).to_string(index=False)}"
+        )
+    if extension in {".xlsx", ".xls"}:
+        workbook = pd.ExcelFile(path)
+        parts = [f"File: {file}\nSheets: {workbook.sheet_names}"]
+        for sheet in workbook.sheet_names:
+            frame = pd.read_excel(path, sheet_name=sheet)
+            parts.append(
+                f"\nSheet: {sheet} | Rows, columns: {frame.shape}\n"
+                f"{frame.head(10).to_string(index=False)}"
+            )
+        return short("\n".join(parts))
+    if extension == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            return "PDF reading needs the optional 'pypdf' package. Install it, then retry."
+        reader = PdfReader(path)
+        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        return short(
+            f"File: {file}\nPages: {len(reader.pages)}\n\nContent:\n{text}"
+        )
+    if extension in {".json", ".jsonl"}:
+        with open(path, "r", encoding="utf-8", errors="replace") as source:
+            text = source.read()
+        try:
+            parsed = json.loads(text) if extension == ".json" else [
+                json.loads(line) for line in text.splitlines() if line.strip()
+            ]
+            text = json.dumps(parsed, indent=2, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+        return short(f"File: {file}\nContent:\n{text}")
+    try:
+        return _text_file_summary(path)
+    except UnicodeDecodeError:
+        return (
+            f"'{file}' is a binary file type that July cannot read yet. "
+            "Upload a text, CSV, JSON, spreadsheet, or PDF file."
+        )
+
+
+def file_summary(file):
+    """Summarise an uploaded local file using its detected format."""
+    path = local_file_path(file)
+    extension = os.path.splitext(path)[1].lower()
+    if extension in {".csv", ".tsv"}:
+        separator = "\t" if extension == ".tsv" else ","
+        df = pd.read_csv(path, sep=separator)
+        return short(
+            f"File: {file}\nRows, columns: {df.shape}\n\n"
+            f"Column types:\n{df.dtypes.to_string()}\n\n"
+            f"Missing values:\n{df.isna().sum().to_string()}\n\n"
+            f"First 5 rows:\n{df.head().to_string()}\n\n"
+            f"Statistics:\n{df.describe(include='all').to_string()}"
+        )
+    if extension in {".xlsx", ".xls"}:
+        workbook = pd.ExcelFile(path)
+        parts = [f"File: {file}\nSheets: {workbook.sheet_names}"]
+        for sheet in workbook.sheet_names:
+            frame = pd.read_excel(path, sheet_name=sheet)
+            parts.append(
+                f"\nSheet: {sheet} | Rows, columns: {frame.shape}\n"
+                f"Columns: {list(frame.columns)}\n"
+                f"Missing values:\n{frame.isna().sum().to_string()}"
+            )
+        return short("\n".join(parts))
+    if extension == ".pdf":
+        return read_local_file(file)
+    if extension in {".json", ".jsonl"}:
+        return read_local_file(file)
+    path_size = os.path.getsize(path)
+    content = read_local_file(file)
+    return short(f"File: {file}\nSize: {path_size} bytes\n\n{content}")
 
 
 def csv_summary(file):
@@ -433,7 +586,80 @@ def update_csv_cell(file, match_column, match_value, target_column, new_value):
     return f"Done. Changed {target_column} from {old} to {typed}. Backup saved at {backup}"
 
 
-# ---------- EMAIL TOOL: SEND (any valid address + approval + limit) ----------
+# ---------- EMAIL TOOL: SEND (approval + limit + no double sends) ----------
+OUTBOX_FILE = "sent_emails.json"   # log of send attempts (the email text is NOT stored)
+DUPLICATE_WINDOW_MIN = 10          # an identical email is blocked this long after it was sent
+
+
+def load_outbox():
+    if not os.path.exists(OUTBOX_FILE):
+        return []
+    try:
+        with open(OUTBOX_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_outbox(entries):
+    with open(OUTBOX_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries[-200:], f, indent=2)
+
+
+def email_key(to, subject, body):
+    """A fingerprint of the email, so July can recognise the same email again."""
+    return hashlib.sha256(f"{to.lower()}\n{subject}\n{body}".encode("utf-8")).hexdigest()
+
+
+def find_sent_folder(mail):
+    """Gmail's 'Sent Mail' folder has a different name in each language, so look for its flag."""
+    try:
+        _, folders = mail.list()
+        for raw in folders or []:
+            line = raw.decode(errors="ignore") if isinstance(raw, bytes) else str(raw)
+            if "\\Sent" in line:
+                m = re.search(r'"([^"]+)"\s*$', line) or re.search(r"(\S+)\s*$", line)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+    return "[Gmail]/Sent Mail"
+
+
+def sent_folder_has(message_id, tries=4, wait=3):
+    """Look for our Message-ID in Gmail's Sent folder.
+    Returns True (found), False (checked, not there) or None (could not check)."""
+    needle = message_id.strip("<>")
+    checked_ok = False
+    for attempt in range(tries):
+        mail = None
+        try:
+            mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=20)
+            mail.login(EMAIL_ADDRESS, EMAIL_APP_PASSWORD)
+            mail.select(f'"{find_sent_folder(mail)}"', readonly=True)
+            _, data = mail.search(None, "HEADER", "Message-ID", f'"{needle}"')
+            checked_ok = True
+            if data and data[0].split():
+                return True
+        except Exception:
+            pass
+        finally:
+            if mail:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+        if attempt < tries - 1:
+            time.sleep(wait)       # Gmail can take a few seconds to file a sent email
+    return False if checked_ok else None
+
+
+def resolve_status(message_id):
+    found = sent_folder_has(message_id)
+    return "sent" if found is True else ("failed" if found is False else "unknown")
+
+
 def send_email(to, subject, body):
     global emails_sent
 
@@ -450,7 +676,30 @@ def send_email(to, subject, body):
     if emails_sent >= MAX_EMAILS:
         return f"Limit reached: only {MAX_EMAILS} emails per run."
 
-    # Safety 3: human approval
+    # Safety 3: never send the same email twice
+    key = email_key(to, subject, body)
+    outbox = load_outbox()
+    for entry in outbox:
+        if entry.get("key") != key:
+            continue
+        if entry.get("status") in ("sending", "unknown"):
+            # An earlier attempt did not finish cleanly (timeout or crash). Ask Gmail what happened.
+            entry["status"] = resolve_status(entry["message_id"])
+            save_outbox(outbox)
+        if entry.get("status") == "unknown":
+            return (
+                "UNCERTAIN: an earlier attempt to send this exact email may or may not have gone out, "
+                "and I could not check Gmail's Sent folder. Do NOT try again. "
+                "Tell the user to check their Sent Mail."
+            )
+        age = time.time() - entry.get("time", 0)
+        if entry.get("status") == "sent" and age < DUPLICATE_WINDOW_MIN * 60:
+            return (
+                f"NOT sent again: this exact email was already sent to {to} "
+                f"{max(1, int(age // 60))} minute(s) ago. Do NOT try again."
+            )
+
+    # Safety 4: human approval
     if not approve(
         "JULY WANTS TO SEND AN EMAIL",
         [
@@ -466,19 +715,66 @@ def send_email(to, subject, body):
     msg["From"] = EMAIL_ADDRESS
     msg["To"] = to
     msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    message_id = make_msgid(domain=EMAIL_ADDRESS.split("@")[-1])
+    msg["Message-ID"] = message_id    # a unique id, so we can find this email in Sent Mail later
     msg.set_content(body)
 
+    # Write down the attempt BEFORE sending. If July crashes or times out, the log shows it.
+    entry = {
+        "key": key,
+        "message_id": message_id,
+        "to": to,
+        "subject": subject,
+        "time": time.time(),
+        "status": "sending",
+    }
+    outbox.append(entry)
+    save_outbox(outbox)
+
+    stage = "connect"
     try:
         with smtplib.SMTP_SSL(
             "smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=20
         ) as server:
+            stage = "login"
             server.login(EMAIL_ADDRESS, EMAIL_APP_PASSWORD)
+            stage = "send"
             server.send_message(msg)
+            stage = "accepted"       # Gmail took the email
+    except (
+        smtplib.SMTPRecipientsRefused,
+        smtplib.SMTPSenderRefused,
+        smtplib.SMTPDataError,
+    ) as e:
+        entry["status"] = "failed"   # Gmail answered "no", so nothing went out
+        save_outbox(outbox)
+        return f"NOT sent: Gmail refused the email ({e}). Nothing went out."
     except Exception as e:
-        return f"Could not send the email: {e}"
+        if stage in ("connect", "login"):
+            entry["status"] = "failed"   # never reached the sending step
+            save_outbox(outbox)
+            return f"NOT sent: the {stage} step failed ({e}). Nothing went out. It is safe to try again."
+        if stage != "accepted":
+            # The connection broke while sending. Gmail may or may not have the email. Check.
+            entry["status"] = resolve_status(message_id)
+            save_outbox(outbox)
+            if entry["status"] == "failed":
+                return (
+                    "NOT sent: the connection broke and the email is not in Gmail's Sent folder. "
+                    "It is safe to try again."
+                )
+            if entry["status"] == "unknown":
+                return (
+                    "UNCERTAIN: the connection broke while sending and I could not check "
+                    "Gmail's Sent folder. Do NOT try again. Tell the user to check their Sent Mail."
+                )
+        # else: Gmail took the email and only the closing step failed, so it counts as sent
 
+    entry["status"] = "sent"
+    save_outbox(outbox)
     emails_sent += 1
-    return f"Email sent to {to}."
+    return f"Email sent to {to}. Do NOT send it again."
 
 
 # ---------- EMAIL TOOLS: READ (read-only) ----------
@@ -777,8 +1073,14 @@ TOOLS = [
          {"repo": S, "path": S, "content": S, "commit_message": S},
          ["repo", "path", "content", "commit_message"]),
     tool("list_data_files",
-         "List the CSV files available in the local data folder. Takes no input.",
+         "List every uploaded/local file available in the data folder. Takes no input.",
          {}, []),
+    tool("file_summary",
+         "Summarise one uploaded local file. Supports CSV, TSV, JSON, JSONL, Excel, text and PDF files.",
+         {"file": S}, ["file"]),
+    tool("read_local_file",
+         "Read the contents or a preview of one uploaded local file for analysis.",
+         {"file": S}, ["file"]),
     tool("csv_summary",
          "Summarise a local CSV file from the data folder: size, columns, missing values, statistics.",
          {"file": S}, ["file"]),
@@ -837,6 +1139,8 @@ FUNCTIONS = {
     "search_code": search_code,
     "write_file": write_file,
     "list_data_files": list_data_files,
+    "file_summary": file_summary,
+    "read_local_file": read_local_file,
     "csv_summary": csv_summary,
     "group_stats": group_stats,
     "plot_chart": plot_chart,
@@ -851,23 +1155,26 @@ FUNCTIONS = {
     "forget_memory": forget_memory,
 }
 
-SYSTEM_BASE = f"""You are July, a friendly AI agent that explores and edits GitHub, analyses and edits local CSV files, sends and reads emails, searches the web, and remembers facts about the user, using tools.
+SYSTEM_BASE = f"""You are July, a friendly AI agent that explores and edits GitHub, analyses uploaded local files, edits local CSV files, sends and reads emails, searches the web, and remembers facts about the user, using tools.
 The owner's GitHub username is {GITHUB_USERNAME}.
 Rules:
 - Never guess. Get real data with tools before answering.
 - Only say you can do something if you have a tool for it. Check your tool list first.
-- Local CSV files (data folder) and GitHub repos are different places. GitHub tools never touch local files.
+- Uploaded local files in the data folder and GitHub repos are different places. GitHub tools never touch local files.
 - If the user names a repo, use it directly as owner/name. Do not search the repo list first.
 - Explore step by step: repo details, then list files, then read files.
 - Repo names must be in owner/name format, like {GITHUB_USERNAME}/July-AI-Agent.
 - Only change things when the user clearly asks for a change.
 - Before editing an existing GitHub file, read it first. Then send the FULL updated file, without losing old parts.
 - After a GitHub change, tell the user the branch and the pull request link, and say they must review and merge it.
-- For data questions, use the CSV tools. Only report numbers a tool returned.
+- For local file questions, call list_data_files first when the file name is unclear, then use file_summary or read_local_file. Only report facts returned by tools.
+- Analyse only the currently uploaded file. Never use a previous, example, or missing file.
+- For tabular data questions, use the CSV/spreadsheet tools and identify the file used in your answer.
 - To change a value in a local CSV, use update_csv_cell. It asks the user for approval.
 - Only send an email when the user clearly asks. If the user says "email me" and gives no address, use their own address: {EMAIL_ADDRESS or 'not set'}.
 - If the user gives an email address, use exactly that address. Never invent or guess an address.
 - Email content must come from real tool results. Never put guessed facts in an email.
+- If send_email says UNCERTAIN, NOT sent again, or already sent, never call send_email again for that email. Tell the user exactly what it said.
 - To check the inbox, use read_emails. To open one email, use read_email_body with the ID from the list. Only report emails the tool returned.
 - To find important college mails, notices or deadlines, use notice_radar first, then read_email_body for details.
 - For current news or facts you do not know, use web_search. Only report what the results say, and mention the link.

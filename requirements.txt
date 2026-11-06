@@ -5,3 +5,4 @@ matplotlib
 python-dotenv
 ddgs
 streamlit>=1.40
+pypdf
