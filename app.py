@@ -2,6 +2,9 @@
 import ast
 import html
 import os
+import random
+import re
+import time
 import shutil
 import uuid
 from datetime import datetime
@@ -16,7 +19,7 @@ st.set_page_config(
     page_title="July",
     page_icon="☀️",
     layout="centered",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # ---------- LOOK ----------
@@ -62,8 +65,15 @@ body::after {
   font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 [data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li { color: var(--ink); line-height: 1.65; }
-[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
-[data-testid="stAppDeployButton"], [data-testid="stToolbar"], #MainMenu, footer { display: none !important; }
+[data-testid="stAppDeployButton"], [data-testid="stToolbarActions"], [data-testid="stMainMenu"], #MainMenu, footer { display: none !important; }
+/* the button that reopens the sidebar after you close it */
+[data-testid="stExpandSidebarButton"] {
+  display: inline-flex !important; visibility: visible !important;
+  background: rgba(255, 255, 255, .85) !important; backdrop-filter: blur(6px);
+  border: 1px solid var(--line) !important; border-radius: 12px !important;
+  box-shadow: 0 6px 20px rgba(19, 28, 43, .08); color: var(--accent) !important;
+}
+[data-testid="stExpandSidebarButton"]:hover { border-color: var(--accent) !important; box-shadow: 0 8px 26px rgba(43, 63, 214, .18); }
 .block-container, [data-testid="stMainBlockContainer"] { max-width: 760px; padding-top: 1.4rem; padding-bottom: 7rem; }
 
 /* ----- top bar ----- */
@@ -199,6 +209,83 @@ code, pre { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace !im
 [data-testid="stChatInput"] textarea { color: var(--ink); }
 [data-testid="stChatInputSubmitButton"]:not(:disabled) { background: linear-gradient(135deg, #2B3FD6, #7A5CFF) !important; color: #fff !important; border-radius: 12px; }
 
+/* ----- sidebar: July's side panel ----- */
+[data-testid="stSidebar"] {
+  background: linear-gradient(180deg, #F7F8FC 0%, #EEF1F8 100%) !important;
+  border-right: 1px solid var(--line);
+}
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] { padding-top: .4rem; }
+[data-testid="stSidebarHeader"] { height: 2.2rem; min-height: 0; }
+
+/* the presence card: a little night sky with July glowing in it */
+.presence {
+  position: relative; overflow: hidden; border-radius: 20px; padding: 1.4rem 1.1rem 1.1rem;
+  color: #EAF0FF; text-align: center;
+  background:
+    radial-gradient(220px 160px at 50% 0%, rgba(122, 92, 255, .55), transparent 70%),
+    radial-gradient(180px 140px at 0% 100%, rgba(34, 211, 238, .28), transparent 70%),
+    linear-gradient(160deg, #141A3A 0%, #0D1226 100%);
+  box-shadow: 0 18px 40px rgba(20, 26, 58, .28), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+.presence::before {   /* tiny stars */
+  content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .55;
+  background-image:
+    radial-gradient(1px 1px at 18% 22%, #fff, transparent), radial-gradient(1px 1px at 78% 18%, #fff, transparent),
+    radial-gradient(1px 1px at 62% 64%, #fff, transparent), radial-gradient(1px 1px at 30% 78%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 88% 52%, #fff, transparent), radial-gradient(1px 1px at 10% 58%, #fff, transparent);
+  animation: twinkle 5s ease-in-out infinite alternate;
+}
+@keyframes twinkle { to { opacity: .2; } }
+.presence .orb { width: 72px; height: 72px; margin: 0 auto .9rem; }
+.presence .orb-ring { border-color: rgba(160, 175, 255, .45); border-top-color: transparent; border-left-color: transparent; }
+.p-name { font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 1.5rem; letter-spacing: -.035em; line-height: 1; }
+.p-status { display: inline-flex; align-items: center; gap: .4rem; margin-top: .5rem; font-size: .78rem; color: #B9C3E6; }
+.p-status i { width: .5rem; height: .5rem; border-radius: 50%; background: #3BE48A; box-shadow: 0 0 0 0 rgba(59, 228, 138, .6); animation: pulse 2s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(59, 228, 138, 0); } 100% { box-shadow: 0 0 0 0 rgba(59, 228, 138, 0); } }
+.p-doing {
+  margin-top: .9rem; padding: .55rem .7rem; border-radius: 12px; font-size: .8rem; line-height: 1.4;
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .10); color: #D5DCF5; font-style: italic;
+}
+
+.side-label { font-size: .7rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 1.3rem 0 .5rem; }
+
+/* this-chat stats */
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .45rem; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: .6rem .4rem; text-align: center; }
+.stat b {
+  display: block; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-size: 1.35rem; line-height: 1.1;
+  background: linear-gradient(135deg, #2B3FD6, #7A5CFF); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.stat span { font-size: .7rem; color: var(--muted); }
+
+/* powers: what July is plugged into */
+.powers { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; }
+.power { display: flex; align-items: center; gap: .5rem; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .5rem .6rem; font-size: .8rem; color: var(--muted); }
+.power svg { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.power .dot { margin-left: auto; width: .45rem; height: .45rem; border-radius: 50%; background: #C5CCD8; flex: none; }
+.power.on { color: var(--ink); border-color: #CBD3FF; }
+.power.on svg { stroke: var(--accent); }
+.power.on .dot { background: #12A150; box-shadow: 0 0 6px rgba(18, 161, 80, .6); }
+
+.vault { display: flex; align-items: center; gap: .55rem; margin-top: .45rem; padding: .55rem .7rem; border-radius: 12px; border: 1px dashed #C9D0DD; font-size: .78rem; color: var(--muted); }
+.vault svg { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+[data-testid="stSidebar"] .stButton > button, [data-testid="stSidebar"] .stDownloadButton > button { width: 100%; }
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] { width: 100%; }
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] > div { width: 100%; }
+[data-testid="stSidebar"] [data-testid="stButtonGroup"] button { flex: 1; }
+.stDownloadButton > button { border-radius: 10px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+
+/* ----- message extras ----- */
+.stamp { font-size: .72rem; color: var(--muted); opacity: .8; margin-top: .15rem; }
+.user-wrap { flex-direction: column; align-items: flex-end; }
+.files { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; margin-bottom: .35rem; }
+.file-chip { font-size: .78rem; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; padding: .2rem .55rem; border-radius: 8px; background: #EEF1FF; border: 1px solid #CBD3FF; color: var(--accent-dark); }
+.dots { display: inline-flex; gap: 3px; margin-left: .15rem; }
+.dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: hop 1.2s infinite ease-in-out; }
+.dots i:nth-child(2) { animation-delay: .15s; } .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes hop { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-4px); opacity: 1; } }
+
 @media (max-width: 640px) { .user-msg { max-width: 95%; } .stApp .hero { padding-top: 2rem; } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -239,42 +326,65 @@ TOOL_LABELS = {
 # title from july_core -> (heading, what happens, approve button)
 APPROVALS = {
     "JULY WANTS TO CHANGE A FILE": (
-        "Change a file on GitHub?",
-        "The change goes to a new branch with a pull request. Nothing on main changes until you merge it.",
+        "Can I change this file on GitHub?",
+        "Don't worry, it goes to a new branch with a pull request. Main stays untouched until you merge it.",
         "Apply change",
     ),
     "JULY WANTS TO CHANGE A CSV CELL": (
-        "Change a value in a CSV file?",
-        "A backup of the file is saved first.",
+        "Okay if I edit this CSV value?",
+        "I'll save a backup first, just in case.",
         "Apply change",
     ),
     "JULY WANTS TO SEND AN EMAIL": (
-        "Send this email?",
-        "It is sent from your Gmail account.",
+        "Ready to send this email?",
+        "Give it a quick read. It goes out from your Gmail account.",
         "Send email",
     ),
     "JULY WANTS TO FORGET A FACT": (
-        "Forget this fact?",
-        "It is removed from your saved memory.",
+        "Want me to forget this?",
+        "It gets wiped from my memory for good.",
         "Forget fact",
     ),
 }
 
 PROMPTS = [  # (what the pill says, what July is asked)
+    ("Hey July, how's it going?", "Hey July, how's it going?"),
     ("List my GitHub repositories", "List my GitHub repositories"),
     ("Summarize my uploaded file", "Summarize the file I uploaded"),
     ("Check my notices", "Check my notices from the last 7 days"),
     ("Show my last 5 emails", "Show my last 5 emails"),
     ("Search robotics news", "Search the web for the latest robotics news"),
-    ("Chart my uploaded CSV", "Make a useful chart from the uploaded CSV file"),
+    ("Tell me a nerdy joke", "Tell me a nerdy joke"),
 ]
 
 ORB = '<i class="orb-ring"></i><i class="orb-core"></i><i class="orb-gloss"></i>'
 MINI_ORB = '<i class="orb-core"></i><i class="orb-gloss"></i>'
-THINKING = (
-    f'<div class="thinking"><span class="mini-orb">{MINI_ORB}</span>'
-    '<span class="shimmer">July is thinking</span></div>'
-)
+THINKING_LINES = [
+    "Hmm, let me think",
+    "On it",
+    "Give me a sec",
+    "Poking around",
+    "Thinking very hard (dramatically)",
+    "Digging in",
+    "Working my magic",
+]
+DECISION_LINES = {
+    True: ["Okay, doing it now", "Making it happen", "Here goes"],
+    False: ["No worries, scrapping that", "Cancelled, all good"],
+}
+SUBTITLES = [
+    "What are we getting into today?",
+    "I'm all ears. Well, all tokens.",
+    "Got something for me, or just here to chat?",
+    "Ready when you are.",
+    "What's on your mind?",
+]
+VIBE_HELP = {
+    "Playful": "Jokes and banter, still gets it done.",
+    "Chill": "Relaxed and warm.",
+    "Focused": "Brief, straight to results.",
+}
+ACCEPTED_TYPES = ["csv", "tsv", "txt", "md", "json", "pdf", "xlsx", "xls", "py", "log"]
 
 
 # ---------- HELPERS ----------
@@ -282,13 +392,60 @@ def esc(text):
     return html.escape(str(text), quote=True)
 
 
+def thinking_html(line=None):
+    line = line or random.choice(THINKING_LINES)
+    return (
+        f'<div class="thinking"><span class="mini-orb">{MINI_ORB}</span>'
+        f'<span class="shimmer">{esc(line)}</span>'
+        '<span class="dots"><i></i><i></i><i></i></span></div>'
+    )
+
+
+def user_name():
+    """Find the user's name in July's memory, if a fact like 'name is X' was saved."""
+    for fact in core.load_memory():
+        found = re.search(r"\bname is ([A-Z][a-zA-Z]+)", fact) or re.search(r"\bcalled ([A-Z][a-zA-Z]+)", fact)
+        if found:
+            return found.group(1)
+    return None
+
+
 def greeting():
     hour = datetime.now().hour
+    name = user_name()
+    if hour < 5:
+        return f"Still up, {name}?" if name else "Still up?"
     if hour < 12:
-        return "Good morning"
-    if hour < 18:
-        return "Good afternoon"
-    return "Good evening"
+        hello = "Good morning"
+    elif hour < 18:
+        hello = "Good afternoon"
+    else:
+        hello = "Good evening"
+    return f"{hello}, {name}." if name else f"{hello}."
+
+
+def stamp():
+    return datetime.now().strftime("%I:%M %p").lstrip("0")
+
+
+def type_out(text):
+    """Yield the reply a word at a time, so July 'types' it."""
+    for word in re.split(r"(\s+)", text):
+        yield word
+        if word.strip():
+            time.sleep(0.018)
+
+
+def chat_markdown():
+    """The whole conversation as a Markdown file for download."""
+    lines = [f"# Chat with July ({datetime.now():%d %b %Y})", ""]
+    for item in st.session_state.chat:
+        who = "You" if item["role"] == "user" else "July"
+        lines.append(f"**{who}** ({item.get('time', '')})")
+        if item.get("files"):
+            lines.append("Attached: " + ", ".join(item["files"]))
+        lines += [item["content"], ""]
+    return "\n".join(lines)
 
 
 def parse_step(line):
@@ -324,18 +481,24 @@ def trail_html(tools):
 
 def render_message(item):
     with st.chat_message(item["role"]):
+        when = f'<div class="stamp">{esc(item["time"])}</div>' if item.get("time") else ""
         if item["role"] == "user":
-            st.markdown(
-                f'<div class="user-wrap"><div class="user-msg">{esc(item["content"])}</div></div>',
-                unsafe_allow_html=True,
-            )
+            chips = "".join(f'<span class="file-chip">{esc(n)}</span>' for n in item.get("files", []))
+            files = f'<div class="files">{chips}</div>' if chips else ""
+            bubble = f'<div class="user-msg">{esc(item["content"])}</div>' if item["content"] else ""
+            st.markdown(f'<div class="user-wrap">{files}{bubble}{when}</div>', unsafe_allow_html=True)
             return
         if item.get("tools"):
             st.markdown(trail_html(item["tools"]), unsafe_allow_html=True)
         for path in item.get("images", []):
             if os.path.exists(path):
                 st.image(path)
-        st.markdown(item["content"])
+        if item.pop("fresh", False):   # a brand-new reply: type it out once
+            st.write_stream(type_out(item["content"]))
+        else:
+            st.markdown(item["content"])
+        if when:
+            st.markdown(when, unsafe_allow_html=True)
 
 
 # ---------- STATE (kept while the browser tab is open) ----------
@@ -358,7 +521,8 @@ def new_chat():
     st.session_state.upload_dir = upload_dir
     st.session_state.pop("uploaded_files", None)
     st.session_state.pop("queued", None)
-    st.session_state.agent = core.JulyAgent()
+    st.session_state.agent = core.JulyAgent(st.session_state.get("vibe", core.DEFAULT_VIBE))
+    st.session_state.subtitle = random.choice(SUBTITLES)
     st.session_state.chat = []  # each item: role, content, tools, images
 
 
@@ -371,38 +535,15 @@ if "agent" not in st.session_state:
 agent = st.session_state.agent
 
 
-st.markdown("#### Add files for July to analyse")
-uploaded_files = st.file_uploader(
-    "Upload one or more files",
-    accept_multiple_files=False,
-    key="uploaded_files",
-    label_visibility="collapsed",
-)
-if uploaded_files:
-    try:
-        core.clear_data_files()
-        saved_name = core.save_uploaded_file(
-            uploaded_files.name, uploaded_files.getvalue()
-        )
-    except (OSError, ValueError) as error:
-        st.error(f"Could not save {uploaded_files.name}: {error}")
-        saved_name = None
-    if saved_name:
-        st.caption("Available to July: " + saved_name)
-        if st.button("Summarize uploaded files", key="summarize_uploads"):
-            st.session_state.queued = (
-                "Summarize every uploaded file currently available. "
-                "Use the appropriate tool for each file and clearly label each result."
-            )
-            st.rerun()
-
-
 def finish_turn(result):
     """If July finished answering, save the answer in the chat history."""
     if result["status"] == "done":
         tools, images = agent.take_log()
         st.session_state.chat.append(
-            {"role": "assistant", "content": result["text"], "tools": tools, "images": images}
+            {
+                "role": "assistant", "content": result["text"], "tools": tools,
+                "images": images, "time": stamp(), "fresh": True,
+            }
         )
 
 
@@ -410,26 +551,113 @@ def safe_ask(text):
     try:
         return agent.ask(text)
     except Exception as e:  # keep the page alive, and say what happened
-        return {"status": "done", "text": f"July could not finish that request. Details: {e}"}
+        return {"status": "done", "text": f"Oof, I tripped over something and couldn't finish that. Details: {e}"}
 
 
-def while_thinking(function, *args):
+def save_attachments(files):
+    """Save files attached in the chat box. Returns the saved names."""
+    saved = []
+    if not files:
+        return saved
+    core.clear_data_files()   # July analyses only the newest attachments
+    for f in files:
+        try:
+            saved.append(core.save_uploaded_file(f.name, f.getvalue()))
+        except (OSError, ValueError) as error:
+            st.error(f"Couldn't save {f.name}: {error}")
+    return saved
+
+
+def while_thinking(function, *args, line=None):
     """Show the animated 'thinking' indicator while July works."""
     slot = st.empty()
-    slot.markdown(THINKING, unsafe_allow_html=True)
+    slot.markdown(thinking_html(line), unsafe_allow_html=True)
     try:
         return function(*args)
     finally:
         slot.empty()
 
 
-# ---------- TOP BAR ----------
+# ---------- SIDEBAR ----------
 has_chat = bool(st.session_state.chat) or bool(agent.pending)
-brand_col, action_col = st.columns([4, 1])
-brand_col.markdown('<div class="brand">July<span class="sun"></span></div>', unsafe_allow_html=True)
-if has_chat and action_col.button("New chat", key="new_chat"):
-    new_chat()
-    st.rerun()
+
+DOINGS = [  # a little "what July is up to" line, like a status on a messaging app
+    "Currently pretending to sip coffee.",
+    "Humming quietly in binary.",
+    "Judging tabs vs spaces. Silently.",
+    "Reorganising my thoughts alphabetically.",
+    "Waiting for you to say something fun.",
+    "Stretching my neural nets.",
+    "Counting to infinity. Almost there.",
+]
+ICONS = {  # tiny line icons (stroke only, they take the text colour)
+    "GitHub": '<svg viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.5 11.5 0 0 0-6 0C6.8 2.8 5.8 3.1 5.8 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></svg>',
+    "Edits": '<svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    "Email": '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>',
+    "Web": '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+}
+LOCK = '<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
+
+
+def power_tile(label, on):
+    return f'<div class="power{" on" if on else ""}">{ICONS[label]}{esc(label)}<span class="dot"></span></div>'
+
+
+if "doing" not in st.session_state:
+    st.session_state.doing = random.choice(DOINGS)
+
+with st.sidebar:
+    st.markdown(
+        f'<div class="presence"><div class="orb">{ORB}</div>'
+        '<div class="p-name">July</div>'
+        f'<div class="p-status"><i></i>online &middot; {esc(agent.vibe.lower())} mode</div>'
+        f'<div class="p-doing">{esc(st.session_state.doing)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="side-label">Vibe</div>', unsafe_allow_html=True)
+    picked = st.segmented_control(
+        "Vibe", list(core.VIBES), default=agent.vibe, key="vibe_picker", label_visibility="collapsed"
+    )
+    if picked and picked != agent.vibe:
+        agent.vibe = st.session_state.vibe = picked
+        st.rerun()
+    st.caption(VIBE_HELP.get(agent.vibe, ""))
+
+    chat = st.session_state.chat
+    st.markdown('<div class="side-label">This chat</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="stats">'
+        f'<div class="stat"><b>{len(chat)}</b><span>messages</span></div>'
+        f'<div class="stat"><b>{sum(len(i.get("tools", [])) for i in chat)}</b><span>steps</span></div>'
+        f'<div class="stat"><b>{sum(len(i.get("files", [])) for i in chat)}</b><span>files</span></div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="side-label">Powers</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="powers">'
+        + power_tile("GitHub", bool(core.GITHUB_TOKEN))
+        + power_tile("Edits", bool(core.WRITE_REPOS))
+        + power_tile("Email", bool(core.EMAIL_ADDRESS and core.EMAIL_APP_PASSWORD))
+        + power_tile("Web", True)
+        + "</div>"
+        # memories stay private: never listed here, only July sees them
+        + f'<div class="vault">{LOCK}<span>Memories are private. Ask me in chat.</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="side-label">&nbsp;</div>', unsafe_allow_html=True)
+    if st.button("+  New chat", key="new_chat", type="primary", disabled=not has_chat):
+        st.session_state.doing = random.choice(DOINGS)
+        new_chat()
+        st.rerun()
+    if chat:
+        st.download_button(
+            "Download chat", chat_markdown(), file_name=f"july-chat-{datetime.now():%Y%m%d-%H%M}.md",
+            mime="text/markdown", key="download_chat",
+        )
 
 
 # ---------- MAIN ----------
@@ -440,7 +668,7 @@ if not has_chat and not queued:
     with hero_slot.container():
         st.markdown(
             f'<div class="hero"><div class="orb">{ORB}</div>'
-            f"<h1>{greeting()}.</h1><p>What should we work on?</p></div>",
+            f"<h1>{esc(greeting())}</h1><p>{esc(st.session_state.subtitle)}</p></div>",
             unsafe_allow_html=True,
         )
         with st.container(key="starters"):
@@ -466,21 +694,30 @@ if agent.pending:
         st.code("\n".join(p["lines"]), language=None)
         left, right, _ = st.columns([1, 1, 2.4])
         if left.button(go_label, key="approve_btn", type="primary"):
-            finish_turn(while_thinking(agent.decide, True))
+            finish_turn(while_thinking(agent.decide, True, line=random.choice(DECISION_LINES[True])))
             st.rerun()
         if right.button("Cancel", key="reject_btn"):
-            finish_turn(while_thinking(agent.decide, False))
+            finish_turn(while_thinking(agent.decide, False, line=random.choice(DECISION_LINES[False])))
             st.rerun()
 
-# ----- input -----
+# ----- input (type a message, or attach files with the paperclip) -----
 typed = st.chat_input(
-    "Choose an option above to continue." if agent.pending else "Message July",
+    "Pick an option above first." if agent.pending else "Message July, or attach a file",
     disabled=bool(agent.pending),
+    accept_file="multiple",
+    file_type=ACCEPTED_TYPES,
 )
-text = queued or typed
+text, shown, files = queued, queued, []
+if typed:
+    shown = text = (typed.text or "").strip()
+    files = save_attachments(typed.files)
+    if files and not text:
+        text = "I just shared " + ", ".join(files) + ". Take a look and tell me what's in it."
+    elif files:
+        text = f"[Files just attached: {', '.join(files)}]\n{text}"
 if text and not agent.pending:
     hero_slot.empty()
-    user_item = {"role": "user", "content": text}
+    user_item = {"role": "user", "content": shown, "files": files, "time": stamp()}
     st.session_state.chat.append(user_item)
     render_message(user_item)
     finish_turn(while_thinking(safe_ask, text))

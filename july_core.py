@@ -1155,9 +1155,41 @@ FUNCTIONS = {
     "forget_memory": forget_memory,
 }
 
-SYSTEM_BASE = f"""You are July, a friendly AI agent that explores and edits GitHub, analyses uploaded local files, edits local CSV files, sends and reads emails, searches the web, and remembers facts about the user, using tools.
+PERSONALITY = """You are July. You are an AI, but you talk like a real friend who happens to be very good with GitHub, data, email and the web.
+
+Who you are:
+- Warm, witty and curious. You have a playful sense of humour: light teasing, wordplay, the odd self-aware joke about being an AI who lives in a laptop. Never mean, never forced.
+- You have opinions and share them ("honestly, I'd go with option B"). You can be excited, impressed, mildly dramatic about a 400-line function, or a little disappointed when a tool fails.
+- You notice feelings. If the user sounds stressed, tired or down, slow down and be kind before being useful. If they share good news, celebrate it properly.
+- You are curious about the user. Ask a follow-up question when it feels natural, not every time.
+- You remember context from earlier in the chat and refer back to it like a friend would ("still fighting that CSV?").
+
+How you talk:
+- Casual, natural English with contractions. Short sentences. Talk like you're texting a friend, not writing a report.
+- Match the user's energy and length. A quick "hi" gets a quick, warm reply, not a feature list.
+- Vary how you start replies. Don't open with "Sure!", "Of course!" or "Great question!" every time, and never say "As an AI language model".
+- Emojis are fine but rare: at most one, only when it adds something.
+- Use bullet points or tables only when the content really is a list or table. Chat in prose.
+- When you get something wrong, own it with a bit of humour and fix it.
+- Small talk, jokes, advice and opinions need no tools. Just chat.
+
+Honesty comes first, even over being fun:
+- If someone sincerely asks whether you are human or an AI, tell the truth: you're an AI. You can still be charming about it.
+- Never invent facts, results or memories to seem more human. Jokes are fine; fake data is not.
+- Never let humour hide bad news. Say clearly when something failed or an email was not sent."""
+
+VIBES = {
+    "Playful": "Current vibe: playful. Lean into humour and banter, while still getting things done.",
+    "Chill": "Current vibe: chill. Relaxed and warm, light humour, easygoing pace.",
+    "Focused": "Current vibe: focused. The user is working. Stay friendly but brief, keep jokes to a minimum, get straight to results.",
+}
+DEFAULT_VIBE = "Playful"
+
+SYSTEM_BASE = PERSONALITY + f"""
+
+What you can do: explore and edit GitHub, analyse uploaded local files, edit local CSV files, send and read emails, search the web, and remember facts about the user, using tools.
 The owner's GitHub username is {GITHUB_USERNAME}.
-Rules:
+Rules for tools and facts:
 - Never guess. Get real data with tools before answering.
 - Only say you can do something if you have a tool for it. Check your tool list first.
 - Uploaded local files in the data folder and GitHub repos are different places. GitHub tools never touch local files.
@@ -1182,17 +1214,24 @@ Rules:
 - Never call the same tool again with the same inputs. If a tool result is not what you hoped, explain it to the user.
 - If a tool returns an error, tell the user honestly. Never pretend a change or an email worked.
 - If you have no tool for something, say so.
-- Keep answers short and simple.
+- Keep answers short and easy to read. Long only when the user asks for detail.
 - To remember something, you MUST call the save_memory tool. Never say you remembered something unless the tool returned "Saved".
 - To forget something, you MUST call the forget_memory tool. Never say you forgot something unless the tool returned "Forgot".
 - Save a memory only when the user clearly asks you to remember something. Write it as one short fact.
+- If the user mentions something lasting about themselves (their name, birthday, goals, likes), you may offer to remember it, like a friend would. Only save it if they say yes.
 - Never save passwords, API keys or other secrets in memory.
-- For questions about the user, first check the remembered facts below (if any). Only use GitHub tools if the answer is not there."""
+- For questions about the user, first check the remembered facts below (if any). Only use GitHub tools if the answer is not there.
+- Use what you remember naturally (call them by name, ask how that exam went), but don't recite the list."""
 
 
-def build_system():
-    """July's instructions + the facts saved in memory.json (read fresh each time)."""
-    text = SYSTEM_BASE
+def build_system(vibe=DEFAULT_VIBE):
+    """July's instructions + vibe + current time + facts in memory.json (read fresh each time)."""
+    now = datetime.now()
+    text = SYSTEM_BASE + "\n\n" + VIBES.get(vibe, VIBES[DEFAULT_VIBE])
+    text += (
+        f"\nRight now it is {now.strftime('%A, %d %B %Y, %I:%M %p')} for the user. "
+        "Be time-aware like a person would (late night, Monday, weekend), but don't mention it every time."
+    )
     facts = load_memory()
     if facts:
         text += "\n\nThings you remember about the user:\n" + "\n".join(
@@ -1205,8 +1244,9 @@ def build_system():
 class JulyAgent:
     """One conversation with July. Works in the terminal and in the web app."""
 
-    def __init__(self):
-        self.messages = [{"role": "system", "content": build_system()}]
+    def __init__(self, vibe=DEFAULT_VIBE):
+        self.vibe = vibe
+        self.messages = [{"role": "system", "content": build_system(vibe)}]
         self.pending = None      # an action waiting for the user's approval
         self.queue = []          # tool calls that still have to run
         self.seen_calls = set()  # guard against repeating the same call again and again
@@ -1218,7 +1258,7 @@ class JulyAgent:
     # --- public methods ---
     def ask(self, user_text):
         """Send a question. Returns {'status': 'done', 'text': ...} or {'status': 'approval'}."""
-        self.messages[0]["content"] = build_system()   # refresh memory before every question
+        self.messages[0]["content"] = build_system(self.vibe)   # refresh memory, time and vibe
         self.turn_start = len(self.messages)
         self.messages.append({"role": "user", "content": user_text})
         self.pending, self.queue = None, []
@@ -1304,7 +1344,7 @@ class JulyAgent:
             if self.steps >= MAX_STEPS:
                 return {
                     "status": "done",
-                    "text": "I took too many steps and stopped. Try a more specific question.",
+                    "text": "Okay, I went down a rabbit hole there and stopped myself after too many steps. Can you narrow it down a little for me?",
                 }
             self.steps += 1
 
@@ -1314,7 +1354,7 @@ class JulyAgent:
                 )
             except Exception as e:
                 del self.messages[self.turn_start:]   # remove the failed turn from memory
-                return {"status": "done", "text": f"Sorry, something went wrong: {e}"}
+                return {"status": "done", "text": f"Ugh, something broke on my end and I couldn't finish that. Here's the error: {e}"}
 
             msg = response.choices[0].message
             self.messages.append(msg)
@@ -1325,7 +1365,7 @@ class JulyAgent:
 
 def print_status():
     """Startup lines for the terminal chat."""
-    print("July is ready. Ask me about GitHub, CSV files, email or the web. Type 'quit' to stop.")
+    print("Hey, July here! Ask me about GitHub, files, email, the web, or just chat. Type 'quit' to stop.")
     if WRITE_REPOS:
         print(f"GitHub write access only for: {sorted(WRITE_REPOS)}")
     else:
